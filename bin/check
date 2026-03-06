@@ -1,0 +1,40 @@
+#!/usr/bin/env node
+
+const { execSync } = require('child_process');
+
+const BEGET_HOST = 'pigeon.qotofey.ru';
+
+const check = (path) => {
+  try {
+    const result = execSync(`curl -s -w '\\n%{http_code}' https://${BEGET_HOST}${path}`, {
+      encoding: 'utf-8',
+      timeout: 5000,
+    });
+    const lines = result.trim().split('\n');
+    const status = lines.pop();
+    const data = lines.join('\n');
+    return { status: parseInt(status), data };
+  } catch (err) {
+    throw new Error(err.message || 'Request failed');
+  }
+};
+
+console.log('[CHECK] Проверка приложения Pigeon...\n');
+
+console.log('-> Проверка /...');
+try {
+  const res = check('/');
+  console.log(`   HTTP ${res.status}: ${res.data}`);
+} catch (err) {
+  console.log(`   [ERROR] Не удалось подключиться: ${err.message}`);
+}
+
+console.log();
+
+console.log('-> Проверка /healthcheck...');
+try {
+  const res = check('/healthcheck');
+  console.log(`   HTTP ${res.status}: ${res.data}`);
+} catch (err) {
+  console.log(`   [ERROR] Не удалось подключиться: ${err.message}`);
+}

@@ -1,0 +1,216 @@
+#!/usr/bin/env node
+
+const { execSync } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+const readline = require('readline');
+
+const CONFIG = {
+  user: 'qotofey',
+  project: 'pigeon.qotofey.ru',
+  backupDir: '~/.backup',
+};
+
+let backupPath = null;
+let isDeploying = false;
+
+const EXCLUDE_FILES = [
+  '.idea',
+  '.git',
+  'node_modules',
+  '.env',
+  '.env.example',
+  '.htaccess',
+  'deploy',
+  'check',
+  '._*',
+  'bin',
+  '.DS_Store'
+];
+
+const run = (cmd, { silent } = {}) => {
+  try {
+    return execSync(cmd, { stdio: silent ? 'pipe' : 'inherit' });
+  } catch (err) {
+    if (err.signal === 'SIGINT') {
+      throw err;
+    }
+    throw new Error(`Command failed: ${cmd}`);
+  }
+};
+
+const runRemoteScript = (host, script) => {
+  const tmpScript = '/tmp/deploy_remote.sh';
+  fs.writeFileSync(tmpScript, script);
+  run(`scp ${tmpScript} ${host}:~/`);
+  run(`ssh ${host} "bash ~/deploy_remote.sh"`);
+  run(`ssh ${host} "rm ~/deploy_remote.sh"`);
+  fs.unlinkSync(tmpScript);
+};
+
+const validateConfig = () => {
+  const pkg = require('../package.json');
+  const htaccessPath = path.join(__dirname, '..', '.htaccess');
+
+  if (!fs.existsSync(htaccessPath)) {
+    return;
+  }
+
+  const htaccessContent = fs.readFileSync(htaccessPath, 'utf-8');
+  const match = htaccessContent.match(/^PassengerStartupFile\s+(\S+)/m);
+
+  if (!match) {
+    return;
+  }
+
+  const passengerStartup = match[1];
+  if (pkg.main === passengerStartup) {
+    console.log(`[OK] PassengerStartupFile соответствует main: ${pkg.main}`);
+    return;
+  }
+
+  console.error('[WARN] Внимание: PassengerStartupFile не совпадает с main в package.json!');
+  console.error(`   main в package.json: ${pkg.main}`);
+  console.error(`   PassengerStartupFile: ${passengerStartup}`);
+
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  const answer = rl.question('Продолжить? (y/n): ');
+  rl.close();
+
+  if (!/^y$/i.test(answer)) {
+    console.log('[ABORT] Деплой отменён');
+    process.exit(1);
+  }
+};
+
+const createArchive = () => {
+  console.log('[ARCHIVE] Создание архива проекта...');
+  const archivePath = '/tmp/pigeon-deploy.tar.gz';
+  const projectRoot = path.join(__dirname, '..');
+
+  const excludeArgs = EXCLUDE_FILES.flatMap((f) => ['--exclude', f]);
+  const tarCmd = `tar ${excludeArgs.join(' ')} -czf ${archivePath} -C ${projectRoot} .`;
+  run(tarCmd);
+
+  return archivePath;
+};
+
+const uploadArchive = (archivePath) => {
+  console.log('[UPLOAD] Загрузка на сервер...');
+  try {
+    run(`scp ${archivePath} ${CONFIG.user}@${CONFIG.user}.beget.tech:~/`);
+  } catch (err) {
+    if (err.signal === 'SIGINT') {
+      console.error('\n[INTERRUPT] Загрузка прервана');
+      process.exit(1);
+    }
+    throw err;
+  }
+};
+
+const getDeployScript = (backupPath) => `#!/bin/bash
+set -e
+export PATH=$HOME/.local/bin:$PATH
+
+echo "[BACKUP] Создание резервной копии..."
+mkdir -p ${backupPath}
+[ -d ~/${CONFIG.project}/node_modules ] && cp -r ~/${CONFIG.project}/node_modules ${backupPath}/
+[ -f ~/${CONFIG.project}/.env ] && cp ~/${CONFIG.project}/.env ${backupPath}/
+
+echo "[DEPLOY] Распаковка архива..."
+mkdir -p ~/${CONFIG.project}
+cd ~/${CONFIG.project}
+tar -xzf ~/pigeon-deploy.tar.gz --strip 1
+
+echo "[NPM] Установка зависимостей..."
+npm install --omit=dev
+
+echo "[RESTART] Создание директории для перезапуска..."
+mkdir -p tmp
+touch tmp/restart.txt
+
+echo "[CLEAN] Очистка..."
+rm ~/pigeon-deploy.tar.gz
+
+echo "[OK] Деплой завершён!"
+`;
+
+const getRollbackScript = (backupPath) => `#!/bin/bash
+set -e
+export PATH=$HOME/.local/bin:$PATH
+
+echo "[ROLLBACK] Восстановление предыдущей версии..."
+cd ~/${CONFIG.project}
+rm -rf node_modules
+[ -d ${backupPath}/node_modules ] && cp -r ${backupPath}/node_modules .
+[ -f ${backupPath}/.env ] && cp ${backupPath}/.env .
+touch tmp/restart.txt
+echo "[OK] Откат завершён!"
+`;
+
+const rollback = (backupPath) => {
+  console.error('[ROLLBACK] Произошла ошибка, выполняю откат...');
+  try {
+    const host = `${CONFIG.user}@${CONFIG.user}.beget.tech`;
+    runRemoteScript(host, getRollbackScript(backupPath));
+    console.error('[ROLLBACK] Предыдущая версия восстановлена');
+  } catch (err) {
+    console.error('[ERROR] Не удалось выполнить откат! Требуется ручное вмешательство.');
+    console.error(`[INFO] Бэкап находится в: ${backupPath}`);
+  }
+};
+
+const handleInterrupt = () => {
+  if (isDeploying && backupPath) {
+    console.error('\n[INTERRUPT] Получен сигнал прерывания...');
+    rollback(backupPath);
+  }
+  process.exit(1);
+};
+
+process.on('SIGINT', handleInterrupt);
+process.on('SIGTERM', handleInterrupt);
+
+const deploy = () => {
+  console.log('[DEPLOY] Деплой Pigeon на Beget...');
+
+  validateConfig();
+
+  const archivePath = createArchive();
+
+  try {
+    uploadArchive(archivePath);
+  } catch (err) {
+    fs.unlinkSync(archivePath);
+    process.exit(1);
+  }
+
+  console.log('[SETUP] Развёртывание на сервере...');
+
+  const timestamp = Date.now();
+  backupPath = `${CONFIG.backupDir}/${timestamp}`;
+  isDeploying = true;
+  const host = `${CONFIG.user}@${CONFIG.user}.beget.tech`;
+
+  try {
+    runRemoteScript(host, getDeployScript(backupPath));
+  } catch (err) {
+    if (err.signal === 'SIGINT') {
+      console.error('\n[INTERRUPT] Получен сигнал прерывания...');
+      rollback(backupPath);
+      process.exit(1);
+    }
+    rollback(backupPath);
+    process.exit(1);
+  }
+
+  fs.unlinkSync(archivePath);
+  isDeploying = false;
+  console.log('[DONE] Готово!');
+};
+
+deploy();

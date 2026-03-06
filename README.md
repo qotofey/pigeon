@@ -32,6 +32,13 @@ cp .env.example .env
 npm start
 ```
 
+## Деплой на Beget
+
+```bash
+npm run deploy
+npm run check
+```
+
 ## Лицензия
 
 ISC

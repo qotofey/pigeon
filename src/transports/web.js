@@ -3,11 +3,11 @@ const express = require("express");
 const app = express();
 const PORT = process.env.PORT || 2400;
 
-app.get("/healthcheck", (req, res) => {
-  res.status(200).json({ status: "ok" });
+app.get("/", (req, res) => {
+  res.send(`Node.js ${process.version}, Express ${require("express/package.json").version}`);
 });
 
-app.get("/up", (req, res) => {
+app.get("/healthcheck", (req, res) => {
   res.status(200).json({ status: "ok" });
 });
 
