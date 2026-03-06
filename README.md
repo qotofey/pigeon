@@ -18,6 +18,14 @@
 npm install
 ```
 
+## Настройка
+
+Скопируйте `.env.example` в `.env` и настройте переменные окружения:
+
+```bash
+cp .env.example .env
+```
+
 ## Запуск
 
 ```bash
