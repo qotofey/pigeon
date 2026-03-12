@@ -11,7 +11,7 @@
 ## Требования
 
 - Node.js >= 24.14.0
-
+- Sendmail (доступен по пути `/usr/local/bin/sendmail`)
 ## Установка
 
 ```bash
