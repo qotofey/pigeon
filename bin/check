@@ -2,7 +2,7 @@
 
 const { execSync } = require('child_process');
 
-const BEGET_HOST = 'pigeon.qotofey.ru';
+const BEGET_HOST = process.env.BEGET_HOST || 'pigeon.qotofey.ru';
 
 const check = (path) => {
   try {
@@ -20,16 +20,6 @@ const check = (path) => {
 };
 
 console.log('[CHECK] Проверка приложения Pigeon...\n');
-
-console.log('-> Проверка /...');
-try {
-  const res = check('/');
-  console.log(`   HTTP ${res.status}: ${res.data}`);
-} catch (err) {
-  console.log(`   [ERROR] Не удалось подключиться: ${err.message}`);
-}
-
-console.log();
 
 console.log('-> Проверка /healthcheck...');
 try {

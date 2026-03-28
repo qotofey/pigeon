@@ -32,7 +32,7 @@ cp .env.example .env
 npm start
 ```
 
-## Деплой на Beget
+## Деплой
 
 ```bash
 npm run deploy
